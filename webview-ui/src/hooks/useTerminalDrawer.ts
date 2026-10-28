@@ -166,11 +166,14 @@ export function useTerminalDrawer({
   );
 
   // A terminal tab shows the agent's character (front-facing mug shot), so it
-  // reads the same palette/hueShift the office assigned that character.
+  // reads the same palette/hueShift the office assigned that character, and
+  // labels it with the character's project.
   const getAppearance = useCallback(
     (id: number): AgentAppearance => {
       const ch = getOfficeState().characters.get(id);
-      return ch ? { palette: ch.palette, hueShift: ch.hueShift } : DEFAULT_APPEARANCE;
+      return ch
+        ? { palette: ch.palette, hueShift: ch.hueShift, label: ch.directoryName }
+        : DEFAULT_APPEARANCE;
     },
     [getOfficeState],
   );
