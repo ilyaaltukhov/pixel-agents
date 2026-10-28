@@ -32,6 +32,7 @@ import type { TeamProvider } from '../../core/src/teamProvider.js';
 import type { ITerminalAdapter } from '../../core/src/terminalAdapter.js';
 import { createAgentState } from './agentState.js';
 import type { AgentStateStore } from './agentStateStore.js';
+import { liveClaudeSessions } from './claudeLiveSessions.js';
 import {
   CLEAR_IDLE_THRESHOLD_MS,
   EXTERNAL_ACTIVE_THRESHOLD_MS,
@@ -1040,6 +1041,8 @@ export function adoptExternalSessionFromHook(
     const projectDir = path.dirname(transcriptPath);
     const directoryName =
       directoryNameResolver?.({ cwd, projectDir }) ??
+      (cwd ? path.basename(cwd) : undefined) ??
+      directoryNameFromTranscript(transcriptPath) ??
       directoryNameFromProjectDir(path.basename(projectDir));
 
     adoptExternalSession(
@@ -1147,10 +1150,19 @@ function adoptExternalSession(
     lastDataAt: Date.now(),
     directoryName,
   });
+  // Skipping to the end skips the record that ended the last turn, so a session
+  // adopted between turns would look busy until its next one. Read its state
+  // off the tail instead.
+  const betweenTurns = fileOffset > 0 && transcriptTurnFinished(jsonlFile) === true;
+  if (betweenTurns) agent.isWaiting = true;
 
   assignPaletteIfNeeded(agent, agents);
   agents.set(id, agent);
   persistAgents();
+  if (betweenTurns) {
+    // A snapshot, not a turn ending now: no bubble, no chime.
+    agents.broadcast({ type: 'agentStatus', id, status: 'waiting', quiet: true });
+  }
 
   // Log is emitted by the caller (adoptExternalSessionFromHook or scanExternalDir)
   // to use the correct prefix (Hook: vs Watcher:).
@@ -1388,6 +1400,82 @@ export function scanExternalDir(
   }
 }
 
+/** How much of a transcript's head to search for its first `cwd`. Claude's
+ *  opening records are metadata; the first cwd-bearing one sits within a few KB. */
+const TRANSCRIPT_CWD_SCAN_BYTES = 256 * 1024;
+
+/** How much of a transcript's end to search for its last turn's state. Large
+ *  tool results and metadata records can trail the last conversational one. */
+const TRANSCRIPT_TAIL_SCAN_BYTES = 512 * 1024;
+
+/**
+ * The Directory name a transcript's own records give: the basename of the first
+ * `cwd` they carry. Exact, unlike the project dir hash, which flattens `/`, `_`
+ * and `.` alike into `-` (`bot_mother` would read back as `mother`). null when
+ * the head holds no cwd.
+ */
+export function directoryNameFromTranscript(file: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(TRANSCRIPT_CWD_SCAN_BYTES);
+    const read = fs.readSync(fd, buf, 0, buf.length, 0);
+    const match = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(buf.toString('utf-8', 0, read));
+    if (!match) return null;
+    return path.basename(JSON.parse(`"${match[1]}"`) as string) || null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Whether a transcript's last turn is over, read from its tail: the last
+ * conversational record is the turn_duration marker or an assistant reply that
+ * ended the turn (finished), or a prompt, tool call or tool result (working).
+ * Metadata records in between are skipped. null when the tail holds no such
+ * record.
+ */
+export function transcriptTurnFinished(file: string): boolean | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const length = Math.min(size, TRANSCRIPT_TAIL_SCAN_BYTES);
+    const buf = Buffer.alloc(length);
+    fs.readSync(fd, buf, 0, length, size - length);
+    const lines = buf.toString('utf-8').split('\n');
+    // The first line may be cut mid-record; it simply fails to parse.
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let record: {
+        type?: string;
+        subtype?: string;
+        message?: { content?: unknown; stop_reason?: string | null };
+      };
+      try {
+        record = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      if (record.type === 'system' && record.subtype === 'turn_duration') return true;
+      if (record.type === 'user') return false;
+      if (record.type === 'assistant') {
+        const content = record.message?.content;
+        const callsTool =
+          Array.isArray(content) &&
+          content.some((block) => (block as { type?: string })?.type === 'tool_use');
+        return !callsTool && record.message?.stop_reason === 'end_turn';
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 /** Derive a readable Directory name from the Claude project dir hash. */
 function directoryNameFromProjectDir(dirName: string): string {
   const parts = dirName.replace(/^-+/, '').split('-');
@@ -1423,6 +1511,7 @@ function scanGlobalProjectDirs(
   }
 
   const now = Date.now();
+  const running = liveClaudeSessions();
   for (const dirPath of projectDirs) {
     // Skip directories already tracked by workspace scanning
     if (isTrackedProjectDir(dirPath)) continue;
@@ -1447,17 +1536,28 @@ function scanGlobalProjectDirs(
         }
       }
       if (tracked) continue;
-      // Activity filter: >3KB AND modified within 10 minutes
       try {
         const stat = fs.statSync(file);
-        if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE) continue;
-        if (now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
+        if (running.has(path.basename(file, '.jsonl'))) {
+          // A running Claude is adopted however long it has sat idle -- the
+          // activity filter below is for transcripts nobody has open any more.
+          // Unless the user closed it: then only new writes bring it back.
+          if (dismissalTracker!.isDismissed(file)) continue;
+          if (dismissalTracker!.isPermanentlyDismissed(file)) continue;
+          const closedAt = dismissalTracker!.lastDismissedAt(file);
+          if (closedAt !== undefined && stat.mtimeMs <= closedAt) continue;
+        } else {
+          // Activity filter: >3KB AND modified within 10 minutes
+          if (stat.size < GLOBAL_SCAN_ACTIVE_MIN_SIZE) continue;
+          if (now - stat.mtimeMs > GLOBAL_SCAN_ACTIVE_MAX_AGE_MS) continue;
+        }
       } catch {
         continue;
       }
 
       const directoryName =
         directoryNameResolver?.({ projectDir: dirPath }) ??
+        directoryNameFromTranscript(file) ??
         directoryNameFromProjectDir(path.basename(dirPath));
       knownJsonlFiles.add(file);
       console.log(

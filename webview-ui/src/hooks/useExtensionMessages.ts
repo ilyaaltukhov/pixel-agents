@@ -570,7 +570,7 @@ export function useExtensionMessages(
           return { ...prev, [id]: awaiting };
         });
         os.setAgentActive(id, status === 'active');
-        if (status === 'waiting') {
+        if (status === 'waiting' && msg.quiet !== true) {
           os.showWaitingBubble(id, msg.awaitingInput === true);
           playDoneSound();
         }

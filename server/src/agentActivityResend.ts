@@ -66,12 +66,14 @@ export function resendAgentActivity(
       });
     }
 
-    // 4. Waiting status
+    // 4. Waiting status -- quiet: the turn ended before this client connected,
+    // so a reload must not chime once per idle agent.
     if (agent.isWaiting) {
       send({
         type: 'agentStatus',
         id,
         status: 'waiting',
+        quiet: true,
       });
     }
 

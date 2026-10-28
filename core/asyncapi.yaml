@@ -275,6 +275,12 @@ components:
             Only meaningful when status is "waiting". True when the agent went
             idle waiting on the user (drives the "Waiting for input" label);
             absent/false means the agent finished its turn ("Done").
+        quiet:
+          type: boolean
+          description: >-
+            A state snapshot (an agent adopted between turns, a reconnect
+            replay), not a transition happening now: apply it without the
+            bubble and chime.
 
     AgentActivityStatus:
       description: Activity state of an agent.
