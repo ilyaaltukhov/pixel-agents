@@ -174,6 +174,8 @@ export class OfficeState {
 
     // First pass: try to keep characters at their existing seats
     for (const ch of this.characters.values()) {
+      // Lounge seats may be gone with the old layout; resting ends here.
+      ch.restSeatId = null;
       if (ch.seatId && this.seats.has(ch.seatId)) {
         const seat = this.seats.get(ch.seatId)!;
         if (!seat.assigned) {
@@ -282,6 +284,30 @@ export class OfficeState {
     if (key) this.blockedTiles.add(key);
     return result;
   }
+
+  /**
+   * A lounge seat for an idle character to rest on: no agent's desk, facing no
+   * PC (so a sofa, not a spare workstation), not another character's rest seat
+   * and nobody standing on it. Random among those, or null when there is none.
+   */
+  private readonly claimRestSeat = (ch: Character): string | null => {
+    const electronicsTiles = this.buildElectronicsTileSet();
+    const taken = new Set<string>();
+    const occupied = new Set<string>();
+    for (const other of this.characters.values()) {
+      if (other.id === ch.id) continue;
+      if (other.restSeatId) taken.add(other.restSeatId);
+      occupied.add(`${other.tileCol},${other.tileRow}`);
+    }
+    const free: string[] = [];
+    for (const [uid, seat] of this.seats) {
+      if (seat.assigned || taken.has(uid)) continue;
+      if (occupied.has(`${seat.seatCol},${seat.seatRow}`)) continue;
+      if (this.isSeatFacingElectronics(seat, electronicsTiles)) continue;
+      free.push(uid);
+    }
+    return free.length > 0 ? free[Math.floor(Math.random() * free.length)] : null;
+  };
 
   /** Collect every tile occupied by electronics furniture (PCs, monitors, etc.). */
   private buildElectronicsTileSet(): Set<string> {
@@ -1147,7 +1173,15 @@ export class OfficeState {
 
       // Temporarily unblock own seat so character can pathfind to it
       this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
+        updateCharacter(
+          ch,
+          dt,
+          this.walkableTiles,
+          this.seats,
+          this.tileMap,
+          this.blockedTiles,
+          this.claimRestSeat,
+        ),
       );
 
       // Tick bubble timer for waiting bubbles

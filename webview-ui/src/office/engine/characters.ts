@@ -79,6 +79,7 @@ export function createCharacter(
     bubbleType: null,
     bubbleTimer: 0,
     seatTimer: 0,
+    restSeatId: null,
     isSubagent: false,
     parentAgentId: null,
     matrixEffect: null,
@@ -96,8 +97,22 @@ export function updateCharacter(
   seats: Map<string, Seat>,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  /** Claims a free lounge seat for an idle character (OfficeState knows which
+   *  seats are free); absent or null = rest at the character's own desk. */
+  claimRestSeat?: (ch: Character) => string | null,
 ): void {
   ch.frameTimer += dt;
+
+  // Work arrived while resting in the lounge: give the lounge seat back. A
+  // seated character stands up, and IDLE walks it to its desk.
+  if (ch.isActive && ch.restSeatId) {
+    ch.restSeatId = null;
+    if (ch.state === CharacterState.TYPE) {
+      ch.state = CharacterState.IDLE;
+      ch.frame = 0;
+      ch.frameTimer = 0;
+    }
+  }
 
   switch (ch.state) {
     case CharacterState.TYPE: {
@@ -112,12 +127,21 @@ export function updateCharacter(
           break;
         }
         ch.seatTimer = 0; // clear sentinel
+        const leftLounge = ch.restSeatId !== null;
+        ch.restSeatId = null;
         ch.state = CharacterState.IDLE;
         ch.frame = 0;
         ch.frameTimer = 0;
-        ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
         ch.wanderCount = 0;
-        ch.wanderLimit = randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX);
+        if (leftLounge) {
+          ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
+          ch.wanderLimit = randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX);
+        } else {
+          // Just got up from the desk: head for the lounge after a short pause
+          // (wanderLimit 0 = rest is due), not after a stroll.
+          ch.wanderTimer = WANDER_PAUSE_MIN_SEC;
+          ch.wanderLimit = 0;
+        }
       }
       break;
     }
@@ -164,7 +188,38 @@ export function updateCharacter(
       // Countdown wander timer
       ch.wanderTimer -= dt;
       if (ch.wanderTimer <= 0) {
-        // Check if we've wandered enough — return to seat for a rest
+        // Wandered enough: rest in the lounge if a seat there is free.
+        if (ch.wanderCount >= ch.wanderLimit) {
+          const restUid = claimRestSeat?.(ch) ?? null;
+          const restSeat = restUid ? seats.get(restUid) : undefined;
+          if (restUid && restSeat) {
+            // Seats are furniture, so blocked; open just this one for the path.
+            const open = new Set(blockedTiles);
+            open.delete(`${restSeat.seatCol},${restSeat.seatRow}`);
+            const path = findPath(
+              ch.tileCol,
+              ch.tileRow,
+              restSeat.seatCol,
+              restSeat.seatRow,
+              tileMap,
+              open,
+            );
+            if (path.length > 0) {
+              ch.restSeatId = restUid;
+              ch.path = path;
+              ch.moveProgress = 0;
+              ch.state = CharacterState.WALK;
+              ch.frame = 0;
+              ch.frameTimer = 0;
+              break;
+            }
+          }
+          // No lounge seat. Fresh from the desk: stroll before going back.
+          if (ch.wanderLimit === 0) {
+            ch.wanderLimit = randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX);
+          }
+        }
+        // Otherwise return to the own desk for a rest
         if (ch.wanderCount >= ch.wanderLimit && ch.seatId) {
           const seat = seats.get(ch.seatId);
           if (seat) {
@@ -237,6 +292,20 @@ export function updateCharacter(
             }
           }
         } else {
+          // Arrived at the lounge seat — sit down for a rest
+          if (ch.restSeatId) {
+            const restSeat = seats.get(ch.restSeatId);
+            if (restSeat && ch.tileCol === restSeat.seatCol && ch.tileRow === restSeat.seatRow) {
+              ch.state = CharacterState.TYPE;
+              ch.dir = restSeat.facingDir;
+              ch.seatTimer = randomRange(SEAT_REST_MIN_SEC, SEAT_REST_MAX_SEC);
+              ch.wanderCount = 0;
+              ch.frame = 0;
+              ch.frameTimer = 0;
+              break;
+            }
+            ch.restSeatId = null;
+          }
           // Check if arrived at assigned seat — sit down for a rest before wandering again
           if (ch.seatId) {
             const seat = seats.get(ch.seatId);
@@ -320,6 +389,8 @@ export function updateCharacter(
 export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
   switch (ch.state) {
     case CharacterState.TYPE:
+      // Resting in the lounge: a still, seated pose rather than typing at air.
+      if (ch.restSeatId) return sprites.reading[ch.dir][0];
       if (isReadingTool(ch.currentTool)) {
         return sprites.reading[ch.dir][ch.frame % 2];
       }

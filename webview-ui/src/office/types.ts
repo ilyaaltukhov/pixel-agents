@@ -213,6 +213,9 @@ export interface Character {
   bubbleTimer: number;
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
   seatTimer: number;
+  /** Lounge seat (a free seat facing no PC, e.g. a sofa) the character is
+   *  resting on or walking to while its agent is idle; null otherwise. */
+  restSeatId: string | null;
   /** Whether this character represents a sub-agent (spawned by Task tool) */
   isSubagent: boolean;
   /** Parent agent ID if this is a sub-agent, null otherwise */
