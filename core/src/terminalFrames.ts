@@ -19,11 +19,22 @@ export type TerminalServerFrame =
    *  cols×rows, and writes `data` to reproduce the screen exactly. */
   | { type: 'replay'; data: string; cols: number; rows: number }
   | { type: 'output'; data: string }
-  | { type: 'exit'; exitCode: number; signal?: number };
+  | { type: 'exit'; exitCode: number; signal?: number }
+  /** Where the server saved an image the client sent. The client pastes the
+   *  path as text: to the app that is a file dropped into its terminal. */
+  | { type: 'imagePath'; path: string };
+
+/** Image types a client may send (what Claude Code accepts as an image). */
+export const TERMINAL_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+export type TerminalImageType = (typeof TERMINAL_IMAGE_TYPES)[number];
 
 /** client → server */
 export type TerminalClientFrame =
-  { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number };
+  | { type: 'input'; data: string }
+  | { type: 'resize'; cols: number; rows: number }
+  /** An image pasted or dropped into the browser terminal, base64-encoded. The
+   *  agent cannot read the browser's clipboard, so it travels here instead. */
+  | { type: 'image'; mime: TerminalImageType; data: string };
 
 export function encodeTerminalFrame(frame: TerminalServerFrame | TerminalClientFrame): string {
   return JSON.stringify(frame);
@@ -40,7 +51,16 @@ export function parseClientFrame(raw: string): TerminalClientFrame | null {
     if (!isPositiveInt(cols) || !isPositiveInt(rows)) return null;
     return { type: 'resize', cols, rows };
   }
+  if (frame.type === 'image') {
+    const { mime, data } = frame;
+    if (!isTerminalImageType(mime) || typeof data !== 'string') return null;
+    return { type: 'image', mime, data };
+  }
   return null;
+}
+
+export function isTerminalImageType(value: unknown): value is TerminalImageType {
+  return (TERMINAL_IMAGE_TYPES as readonly unknown[]).includes(value);
 }
 
 export function parseServerFrame(raw: string): TerminalServerFrame | null {
@@ -59,6 +79,9 @@ export function parseServerFrame(raw: string): TerminalServerFrame | null {
     return typeof frame.signal === 'number'
       ? { type: 'exit', exitCode: frame.exitCode, signal: frame.signal }
       : { type: 'exit', exitCode: frame.exitCode };
+  }
+  if (frame.type === 'imagePath') {
+    return typeof frame.path === 'string' ? { type: 'imagePath', path: frame.path } : null;
   }
   return null;
 }

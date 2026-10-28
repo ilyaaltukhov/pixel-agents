@@ -48,6 +48,9 @@ export function TerminalPaneStack({
       paste: (data) => {
         if (shownRef.current !== null) inputs.current.get(shownRef.current)?.paste(data);
       },
+      pasteImage: (image) => {
+        if (shownRef.current !== null) inputs.current.get(shownRef.current)?.pasteImage(image);
+      },
     }),
     [],
   );

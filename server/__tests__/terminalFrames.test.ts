@@ -78,3 +78,27 @@ describe('server → client frames', () => {
     expect(parseServerFrame('{"type":"shell","data":"x"}')).toBeNull();
   });
 });
+
+describe('image frames', () => {
+  it('parses an image upload of an accepted type', () => {
+    expect(parseClientFrame('{"type":"image","mime":"image/png","data":"AAEC"}')).toEqual({
+      type: 'image',
+      mime: 'image/png',
+      data: 'AAEC',
+    });
+  });
+
+  it('rejects other types and missing data', () => {
+    expect(parseClientFrame('{"type":"image","mime":"image/svg+xml","data":"AA"}')).toBeNull();
+    expect(parseClientFrame('{"type":"image","mime":"text/plain","data":"AA"}')).toBeNull();
+    expect(parseClientFrame('{"type":"image","mime":"image/png"}')).toBeNull();
+  });
+
+  it('parses the saved-path reply', () => {
+    expect(parseServerFrame('{"type":"imagePath","path":"/tmp/a.png"}')).toEqual({
+      type: 'imagePath',
+      path: '/tmp/a.png',
+    });
+    expect(parseServerFrame('{"type":"imagePath"}')).toBeNull();
+  });
+});

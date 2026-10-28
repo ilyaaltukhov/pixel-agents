@@ -252,4 +252,32 @@ describe('terminal WebSocket auth', () => {
     expect(frames[0].rows).toBeTypeOf('number');
     expect(frames[1]).toEqual({ type: 'output', data: 'after-attach' });
   });
+
+  it('saves an image the browser pastes and answers with its path', async () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+    const ws = new WebSocket(terminalUrl(port, 1, token));
+    const reply = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      ws.on('message', (raw: Buffer | string) => {
+        const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (frame.type === 'replay') {
+          ws.send(
+            JSON.stringify({ type: 'image', mime: 'image/png', data: png.toString('base64') }),
+          );
+        } else if (frame.type === 'imagePath') {
+          resolve(frame);
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out waiting for imagePath')), 5_000);
+    });
+    ws.close();
+
+    const file = String(reply.path);
+    expect(path.dirname(file)).toBe(path.join(tmpBase, '.pixel-agents', 'pasted'));
+    expect(file).toMatch(/agent1-.*\.png$/);
+    expect(fs.readFileSync(file)).toEqual(png);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // Nothing reached the PTY: pasting the path is the client's move.
+    expect(lastPty.written).toEqual([]);
+  });
 });

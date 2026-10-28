@@ -138,6 +138,10 @@ export const TERMINAL_TERM_NAME = 'xterm-256color';
 export const TERMINAL_KILL_GRACE_MS = 2_000;
 /** How long shutdown waits past the SIGKILL escalation for the exits to land. */
 export const TERMINAL_SHUTDOWN_SLACK_MS = 1_000;
+/** Largest image a browser terminal may paste (decoded bytes). */
+export const TERMINAL_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+/** Pasted images older than this are deleted when the next one is saved. */
+export const TERMINAL_IMAGE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 /** unavailableReason() when the operator opted out with --no-terminal. Shown
  *  verbatim as the disabled + Agent button's tooltip in the browser. */
 export const TERMINAL_DISABLED_BY_FLAG_REASON = 'Terminal disabled with --no-terminal.';

@@ -13,6 +13,7 @@ import {
   TERMINAL_URL_PATTERN,
 } from '../constants.js';
 import { attachClipboardInput } from '../terminal/clipboardInput.js';
+import { attachImageInput, encodeImage } from '../terminal/imageInput.js';
 import type { TerminalConnectionStatus } from '../terminal/terminalClient.js';
 import { TerminalConnection } from '../terminal/terminalClient.js';
 import { isTypingInTerminal } from '../terminal/terminalDom.js';
@@ -45,6 +46,8 @@ export interface TerminalInputHandle {
    *  the running app has turned that mode on — Claude Code has, and without
    *  the markers a multiline paste would submit at its first newline. */
   paste: (data: string) => void;
+  /** Upload an image to the server and paste its saved path (imageInput.ts). */
+  pasteImage: (image: Blob) => void;
 }
 
 /**
@@ -120,8 +123,19 @@ export function TerminalPane({
         term.write(`\r\n\x1b[90m[process exited with code ${String(exitCode)}]\x1b[0m\r\n`);
       },
       onStatusChange: (status) => statusRef.current?.(agentId, status),
+      // The server saved an image we sent: paste its path, as dropping a file
+      // into a local terminal would — Claude Code attaches it as an image.
+      onImagePath: (path) => term.paste(path),
     });
     void connection.connect();
+
+    const pasteImage = (image: Blob): void => {
+      void encodeImage(image).then((encoded) => {
+        if (!encoded || !connection.sendImage(encoded.mime, encoded.data)) {
+          term.write('\r\n\x1b[90m[could not send the image]\x1b[0m\r\n');
+        }
+      });
+    };
 
     term.onData((data) => connection.write(data));
     // Keyboard copy (verbatim; Alt+C = copy as text) and paste, OSC 52 writes.
@@ -131,7 +145,10 @@ export function TerminalPane({
     registerInputRef.current?.(agentId, {
       send: (data) => connection.write(data),
       paste: (data) => term.paste(data),
+      pasteImage,
     });
+    // Images pasted or dropped onto the pane go up as files.
+    const detachImages = attachImageInput(host, pasteImage);
 
     // Touch: scroll + flick, tap to focus / open a URL, long-press selection
     // with handles and a copy pill (see touchGesture.ts for the why).
@@ -195,6 +212,7 @@ export function TerminalPane({
       if (verifyFrame !== null) cancelAnimationFrame(verifyFrame);
       detachTouch();
       detachClipboard();
+      detachImages();
       observer.disconnect();
       registerInputRef.current?.(agentId, null);
       connection.dispose();

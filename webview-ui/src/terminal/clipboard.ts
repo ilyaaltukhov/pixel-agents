@@ -64,3 +64,31 @@ export async function readClipboardText(promptLabel: string): Promise<string | n
   }
   return window.prompt(promptLabel) || null;
 }
+
+/**
+ * What to paste from the mobile paste key: an image (a copied photo or
+ * screenshot) or text, or null. One Clipboard API read() covers both, so
+ * Safari shows its paste callout once; without read() (or when it fails)
+ * this is readClipboardText. A desktop paste arrives as a paste event
+ * instead (imageInput.ts).
+ */
+export async function readClipboardContent(promptLabel: string): Promise<Blob | string | null> {
+  if (window.isSecureContext && navigator.clipboard?.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) return await item.getType(type);
+      }
+      for (const item of items) {
+        if (item.types.includes('text/plain')) {
+          return (await (await item.getType('text/plain')).text()) || null;
+        }
+      }
+      return null;
+    } catch {
+      // Unsupported type, dismissed callout, or denied: try the text path.
+    }
+  }
+  return readClipboardText(promptLabel);
+}

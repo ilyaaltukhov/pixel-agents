@@ -10,6 +10,7 @@
  */
 
 import { TERMINAL_WS_PREFIX } from '../../../core/src/constants.js';
+import type { TerminalImageType } from '../../../core/src/terminalFrames.js';
 import { parseServerFrame } from '../../../core/src/terminalFrames.js';
 import { reconnectDelayMs } from '../transport/reconnectBackoff.js';
 import { serverToken } from '../transport/serverToken.js';
@@ -21,6 +22,8 @@ export interface TerminalConnectionHandlers {
   onReplay(data: string, cols: number, rows: number): void;
   onExit(exitCode: number): void;
   onStatusChange(status: TerminalConnectionStatus): void;
+  /** The server saved an image this client sent (sendImage) at `path`. */
+  onImagePath(path: string): void;
 }
 
 export type TerminalConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -90,6 +93,8 @@ export class TerminalConnection {
         this.handlers.onOutput(frame.data);
       } else if (frame.type === 'replay') {
         this.handlers.onReplay(frame.data, frame.cols, frame.rows);
+      } else if (frame.type === 'imagePath') {
+        this.handlers.onImagePath(frame.path);
       } else {
         this.exited = true;
         this.handlers.onExit(frame.exitCode);
@@ -142,6 +147,11 @@ export class TerminalConnection {
   resize(cols: number, rows: number): void {
     this.pending = { cols, rows };
     this.send({ type: 'resize', cols, rows });
+  }
+
+  /** Upload an image (base64) for the server to save; onImagePath answers. */
+  sendImage(mime: TerminalImageType, data: string): boolean {
+    return this.send({ type: 'image', mime, data });
   }
 
   dispose(): void {

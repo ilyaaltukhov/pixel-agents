@@ -26,6 +26,7 @@ import {
   WS_CLOSE_UNAUTHORIZED,
 } from '../constants.js';
 import { isAllowedWebSocketOrigin, standaloneHandshakeVerdict } from '../wsAuth.js';
+import { savePastedImage } from './pastedImages.js';
 import type { PtySessionManager } from './ptySessionManager.js';
 
 export interface TerminalRoutesOptions {
@@ -131,8 +132,20 @@ export function registerTerminalRoutes(app: FastifyInstance, options: TerminalRo
         if (!frame) return; // Malformed/unknown frames are ignored, never thrown on.
         if (frame.type === 'input') {
           session.write(frame.data);
-        } else {
+        } else if (frame.type === 'resize') {
           session.resize(frame.cols, frame.rows);
+        } else {
+          // An image pasted in the browser: save it and hand the path back for
+          // the client to paste (it knows whether the app wants bracketed paste).
+          let file: string | null = null;
+          try {
+            file = savePastedImage(agentId, frame.mime, frame.data);
+          } catch (err) {
+            console.error(
+              `[Pixel Agents] Terminal: agent ${agentId} image save failed: ${String(err)}`,
+            );
+          }
+          if (file) forward(encodeTerminalFrame({ type: 'imagePath', path: file }));
         }
       });
 
