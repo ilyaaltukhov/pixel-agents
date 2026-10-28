@@ -166,12 +166,16 @@ function App() {
   const launchIntoDirectory = useCallback((directory: Directory) => {
     transport.send({ type: 'launchAgent', directoryPath: directory.path });
   }, []);
+  const sendFocusAgent = useCallback((id: number) => {
+    transport.send({ type: 'focusAgent', id });
+  }, []);
   const mobileShell = useMobileShell({
     getOfficeState,
     terminalAgentIds,
     drawer: terminalDrawer,
     focusedAgentId,
     launchAgent: launchIntoDirectory,
+    focusAgent: sendFocusAgent,
   });
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
@@ -340,8 +344,9 @@ function App() {
       const os = getOfficeState();
       const focusId = os.terminalOwnerOf(agentId);
       transport.send({ type: 'focusAgent', id: focusId });
-      // Standalone: focusAgent is a no-op server-side (there's no editor to
-      // raise a panel in), so focus is resolved here — reveal the agent's tab
+      // Standalone: the server has no editor panel to raise (it only opens a
+      // tmux console for an external agent, announced as a new terminal), so
+      // focus is resolved here — reveal the agent's tab
       // (desktop drawer) and slide to the terminal page (mobile). A Teammate
       // without a terminal of its own runs in its Lead's, so it reveals that
       // one (VS Code resolves the same way server-side).

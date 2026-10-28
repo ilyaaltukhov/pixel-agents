@@ -25,6 +25,9 @@ interface MobileShellInputs {
   drawer: TerminalDrawerController;
   focusedAgentId: number | null;
   launchAgent: (directory: Directory) => void;
+  /** Tell the host an agent was picked: for an external agent in tmux the
+   *  server answers with a console (terminalSessionOpened). */
+  focusAgent: (agentId: number) => void;
 }
 
 /**
@@ -39,6 +42,7 @@ export function useMobileShell({
   drawer,
   focusedAgentId,
   launchAgent,
+  focusAgent,
 }: MobileShellInputs): MobileShellController {
   const [view, setView] = useState<MobileView>('office');
   const { reveal, lastOpened } = drawer;
@@ -87,6 +91,9 @@ export function useMobileShell({
     (agentId: number) => {
       const os = getOfficeState();
       const hasTerminal = terminalAgentIds.includes(agentId);
+      // No pane yet: ask for one. A tmux-hosted agent gets its console by the
+      // next tap, so the two-step tap below then opens it like any other.
+      if (!hasTerminal) focusAgent(agentId);
       if (view === 'terminal') {
         os.selectAndFollow(agentId);
         if (hasTerminal) reveal(agentId);
@@ -102,7 +109,7 @@ export function useMobileShell({
       // Pre-select the pane (and the card highlight) without leaving the office.
       reveal(agentId);
     },
-    [getOfficeState, terminalAgentIds, view, reveal],
+    [getOfficeState, terminalAgentIds, view, reveal, focusAgent],
   );
 
   return { view, showTerminal, toggleView, selectCard, launch };

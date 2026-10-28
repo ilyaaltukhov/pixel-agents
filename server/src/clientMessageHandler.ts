@@ -27,6 +27,7 @@ import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
+import { attachTmuxConsole, isTmuxConsole } from './terminal/tmuxConsole.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
@@ -165,6 +166,13 @@ export function handleClientMessage(
       // an agentClosed broadcast.
       const id = msg.id as number;
       const agent = store.get(id);
+      // A tmux console is a view onto someone else's terminal: closing its tab
+      // closes the view and keeps the agent. A second close (no terminal now)
+      // dismisses the agent as for any external one.
+      if (isTmuxConsole(id)) {
+        ctx.ptyManager?.dispose(id);
+        break;
+      }
       if (agent && runtime) {
         // dispose() is a no-op for agents with no terminal, so this is safe for
         // both shapes. The PTY's onExit handler does the store cleanup for
@@ -359,10 +367,18 @@ export function handleClientMessage(
       });
       break;
 
+    case 'focusAgent': {
+      // Tab focus itself is client-side. What the server adds: an external agent
+      // running in a tmux pane gets a console on focus, announced like a launched
+      // agent's terminal so the client opens its tab. No-op for anything else.
+      if (ctx.ptyManager) {
+        void attachTmuxConsole({ store, ptyManager: ctx.ptyManager }, msg.id as number);
+      }
+      break;
+    }
+
     default:
-      // focusAgent is handled entirely client-side in standalone (it focuses the
-      // drawer tab, which the server has no say in). exportLayout / importLayout
-      // still require IDE-specific handling.
+      // exportLayout / importLayout still require IDE-specific handling.
       break;
   }
 }
